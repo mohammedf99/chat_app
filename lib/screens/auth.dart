@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'package:chat_app/widgets/image_input.dart';
 
 final _firebase = FirebaseAuth.instance;
 
@@ -15,16 +21,24 @@ class _AuthScreenState extends State<AuthScreen> {
   var _isLogin = true;
   var _enteredEmail = "";
   var _enteredPassword = "";
+  var _enteredUsername = "";
+  File? _selectedImage;
+  var _isAuthenticating = false;
 
   void _submit() async {
     final isValid = _formKey.currentState!.validate();
 
-    if (!isValid) {
+    if (!isValid || !_isLogin && _selectedImage == null) {
       return;
     }
+
     _formKey.currentState!.save();
 
     try {
+      setState(() {
+        _isAuthenticating = true;
+      });
+
       if (_isLogin) {
         // Login
         final userCredential = await _firebase.signInWithEmailAndPassword(
@@ -37,6 +51,22 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _enteredEmail,
           password: _enteredPassword,
         );
+
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child("user_images")
+            .child("${userCredential.user!.uid}.jpg");
+        await storageRef.putFile(_selectedImage!);
+        final imageUrl = await storageRef.getDownloadURL();
+        await FirebaseFirestore.instance
+            .collection("users")
+            .doc(userCredential.user!.uid)
+            .set({
+          "username": _enteredUsername,
+          "email": _enteredEmail,
+          "password": _enteredPassword,
+          "image_url": imageUrl,
+        });
       }
     } on FirebaseAuthException catch (err) {
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -45,6 +75,9 @@ class _AuthScreenState extends State<AuthScreen> {
           content: Text(err.message ?? "Authentication failed"),
         ),
       );
+      setState(() {
+        _isAuthenticating = false;
+      });
     }
   }
 
@@ -53,6 +86,7 @@ class _AuthScreenState extends State<AuthScreen> {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.primary,
       body: Center(
+        key: ValueKey(_isLogin),
         child: SingleChildScrollView(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -76,6 +110,28 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!_isLogin)
+                            ImageInput(
+                                onSelectImage: (pickedImage) =>
+                                    _selectedImage = pickedImage),
+                          if (!_isLogin)
+                            TextFormField(
+                              decoration: const InputDecoration(
+                                labelText: "Username",
+                                border: OutlineInputBorder(),
+                              ),
+                              autocorrect: false,
+                              textCapitalization: TextCapitalization.none,
+                              validator: (value) {
+                                if (value == null || value.trim().length < 4) {
+                                  return "Username must be at least 4 characters long.";
+                                }
+                                return null;
+                              },
+                              onSaved: (newValue) =>
+                                  _enteredUsername = newValue!,
+                            ),
+                          const SizedBox(height: 10),
                           TextFormField(
                             decoration: const InputDecoration(
                               labelText: "Email",
@@ -111,33 +167,37 @@ class _AuthScreenState extends State<AuthScreen> {
                             onSaved: (newValue) => _enteredPassword = newValue!,
                           ),
                           const SizedBox(height: 10),
-                          ElevatedButton(
-                            onPressed: _submit,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primaryContainer,
+                          if (_isAuthenticating)
+                            const CircularProgressIndicator(),
+                          if (!_isAuthenticating)
+                            ElevatedButton(
+                              onPressed: _submit,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer,
+                              ),
+                              child: Text(_isLogin ? "Login" : "Signup"),
                             ),
-                            child: Text(_isLogin ? "Login" : "Signup"),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _isLogin = !_isLogin;
-                              });
-                            },
-                            child: Text(
-                              _isLogin
-                                  ? "Create new account"
-                                  : "I already have an account",
+                          if (!_isAuthenticating)
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _isLogin = !_isLogin;
+                                });
+                              },
+                              child: Text(
+                                _isLogin
+                                    ? "Create new account"
+                                    : "I already have an account",
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),
                   ),
                 ),
-              )
+              ),
             ],
           ),
         ),
